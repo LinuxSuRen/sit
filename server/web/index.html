@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>坐姿检测助手</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>坐姿检测助手</h1>
+    <span id="conn-badge" class="badge offline">未连接</span>
+  </header>
+
+  <main>
+    <section class="camera">
+      <div class="views-row" id="views-row">
+        <div class="view-unit" id="unit-front">
+          <div class="stage">
+            <video id="video-front" autoplay playsinline muted></video>
+            <canvas id="overlay-front"></canvas>
+            <span class="stage-label" id="label-front">摄像头</span>
+          </div>
+          <div class="unit-controls">
+            <select id="device-front" hidden></select>
+            <button id="calib-front" class="secondary" disabled>标定此视角</button>
+          </div>
+        </div>
+
+        <div class="view-unit" id="unit-side" hidden>
+          <div class="stage">
+            <video id="video-side" autoplay playsinline muted></video>
+            <canvas id="overlay-side"></canvas>
+            <span class="stage-label">侧视</span>
+          </div>
+          <div class="unit-controls">
+            <select id="device-side" hidden></select>
+            <button id="calib-side" class="secondary" disabled>标定此视角</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="banner" class="banner standalone">尚未开始检测</div>
+
+      <div class="controls">
+        <button id="start-btn">开始检测</button>
+        <p class="hint" id="hint-text">
+          画面只在本机浏览器中分析，服务器只收到骨架坐标。首次使用请先保持标准坐姿并点击「标定此视角」，
+          之后的角度判定都以它为基准。只有一个摄像头也可以用；有两个时建议一个正视、一个侧视，判定更准。
+        </p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="status-card" id="status-card">
+        <span id="status-dot" class="dot"></span>
+        <span id="status-text">未开始</span>
+      </div>
+
+      <div id="view-chips" class="view-chips"></div>
+
+      <ul id="issues" class="issues" hidden></ul>
+
+      <div class="metrics">
+        <div class="metric" data-key="neck_forward">
+          <label id="label-neck">颈部前倾</label>
+          <div class="bar"><i></i></div>
+          <output>0°</output>
+        </div>
+        <div class="metric" data-key="torso_forward">
+          <label id="label-torso">躯干前倾</label>
+          <div class="bar"><i></i></div>
+          <output>0°</output>
+        </div>
+        <div class="metric" data-key="head_tilt">
+          <label id="label-tilt">头部侧倾</label>
+          <div class="bar"><i></i></div>
+          <output>0°</output>
+        </div>
+      </div>
+
+      <div class="seated">
+        <label>连续就座 <output id="seated-now">00:00</output></label>
+        <progress id="seated-bar" max="100" value="0"></progress>
+        <span id="seated-limit" class="muted">提醒目标 45 分钟</span>
+      </div>
+
+      <details class="thresholds">
+        <summary>判定阈值（服务器配置）</summary>
+        <dl id="threshold-list"></dl>
+      </details>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
