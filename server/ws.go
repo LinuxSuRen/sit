@@ -7,7 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/linuxsuren/sit/posture"
+	"github.com/linuxsuren/sitcoach/posture"
 )
 
 //go:embed web

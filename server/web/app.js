@@ -15,7 +15,7 @@ const RECONNECT_MS = 2000;
 const CALIB_MS = 3000;
 const CALIB_INTERVAL_MS = 200;
 const VOICE_REPEAT_MS = 2 * 60 * 1000; // 持续不良时每 2 分钟重复提醒
-const VOICE_STORAGE_KEY = "sit-voice-enabled";
+const VOICE_STORAGE_KEY = "sitcoach-voice-enabled";
 
 const VIEW_FRONT = "front";
 const VIEW_SIDE = "side";

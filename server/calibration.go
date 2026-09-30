@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/linuxsuren/sit/posture"
+	"github.com/linuxsuren/sitcoach/posture"
 )
 
 // Option configures optional Server behavior.

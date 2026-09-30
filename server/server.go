@@ -13,7 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/linuxsuren/sit/posture"
+	"github.com/linuxsuren/sitcoach/posture"
 )
 
 // Server wires the HTTP routes to the posture engine.

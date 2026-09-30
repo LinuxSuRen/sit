@@ -1,4 +1,4 @@
-// sit 是一个坐姿检测服务：浏览器用 MediaPipe 提取人体关键点，
+// sitcoach 是一个坐姿检测服务：浏览器用 MediaPipe 提取人体关键点，
 // Go 后端基于几何角度判定坐姿是否标准，并提供久坐提醒。
 package main
 
@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/linuxsuren/sit/posture"
-	"github.com/linuxsuren/sit/server"
+	"github.com/linuxsuren/sitcoach/posture"
+	"github.com/linuxsuren/sitcoach/server"
 )
 
 // 构建时通过 -ldflags 注入（见 .github/workflows/release.yml）。
@@ -22,12 +22,12 @@ var (
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP 监听地址")
-	calibPath := flag.String("calibration", "", "坐姿标定基线文件路径；留空时使用 ~/.sit-calibration.json")
+	calibPath := flag.String("calibration", "", "坐姿标定基线文件路径；留空时使用 ~/.sitcoach-calibration.json")
 	showVersion := flag.Bool("version", false, "输出版本信息后退出")
 	flag.Parse()
 
 	if *showVersion {
-		slog.New(slog.NewTextHandler(os.Stdout, nil)).Info("sit",
+		slog.New(slog.NewTextHandler(os.Stdout, nil)).Info("sitcoach",
 			"version", version, "commit", commit, "build_date", buildDate)
 		return
 	}
@@ -38,7 +38,7 @@ func main() {
 		if err != nil {
 			slog.Warn("resolve home dir failed, calibration persistence disabled", "err", err)
 		} else {
-			path = filepath.Join(home, ".sit-calibration.json")
+			path = filepath.Join(home, ".sitcoach-calibration.json")
 		}
 	}
 
@@ -54,7 +54,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger.Info("sit server listening", "addr", *addr,
+	logger.Info("sitcoach server listening", "addr", *addr,
 		"page", "http://localhost:8080/", "calibration_file", path,
 		"version", version, "commit", commit)
 	if err := http.ListenAndServe(*addr, srv.Handler()); err != nil {

@@ -14,7 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/linuxsuren/sit/posture"
+	"github.com/linuxsuren/sitcoach/posture"
 )
 
 func newTestServer(t *testing.T, cfg posture.Config) *httptest.Server {
