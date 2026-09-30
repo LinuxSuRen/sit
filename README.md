@@ -45,6 +45,16 @@
 角度判定带去抖状态机：连续 8 帧超标才告警、连续 15 帧恢复才解除，避免抖动误报。
 髋部不在画面时自动跳过躯干类判定（只监控上半身也可用）。
 
+### 语音提示
+
+状态卡右侧的「语音提示」开关（默认关闭，状态保存在浏览器本地）打开后，坐姿出现
+问题时用浏览器内置语音（Web Speech API，中文）播报提醒：
+
+- 问题出现时播报一次，多个问题合并成一句话
+- 轻度恶化到重度时再播报一次，重度问题会带上“明显”字样
+- 持续不良期间每 2 分钟重复提醒；恢复后重置，再次出现会重新播报
+- 纯前端实现，无音频文件依赖；语音文案与问题列表共用同一份映射表
+
 ## 运行
 
 ```bash
@@ -121,6 +131,31 @@ go build ./...
 go test ./...
 go vet ./...
 ```
+
+## 构建与发布
+
+本地构建会注入占位版本信息，正式版本号由 CI 构建时注入：
+
+```bash
+go build -trimpath -ldflags "-s -w" -o sit .
+./sit -version   # 输出 version/commit/build_date
+```
+
+### GitHub Actions
+
+- `build.yml`：push 到 master / 提交 PR 时自动跑 `go vet` + `go test`
+- `release.yml`：**创建 GitHub Release（发布后）** 自动触发，也可以在
+  Actions 页面手动触发并输入 tag；交叉编译 6 个平台
+  （linux/darwin/windows × amd64/arm64），Windows 打 zip、其余打 tar.gz
+  （内含二进制、LICENSE、README），附 `checksums.txt`（sha256），
+  自动上传到对应 Release
+
+发布流程：合并代码 → 打 tag 并创建 Release（如 `v0.1.0`）→ CI 自动构建上传。
+发布包命名：`sit_<os>_<arch>.tar.gz` / `sit_<os>_<arch>.zip`。
+
+## License
+
+[MIT](LICENSE)
 
 ## 方案来源与参考
 
