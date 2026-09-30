@@ -14,6 +14,8 @@ const SEND_INTERVAL_MS = 200; // 后端按帧去抖，每视角 5 帧/秒足够
 const RECONNECT_MS = 2000;
 const CALIB_MS = 3000;
 const CALIB_INTERVAL_MS = 200;
+const VOICE_REPEAT_MS = 2 * 60 * 1000; // 持续不良时每 2 分钟重复提醒
+const VOICE_STORAGE_KEY = "sit-voice-enabled";
 
 const VIEW_FRONT = "front";
 const VIEW_SIDE = "side";
@@ -75,6 +77,7 @@ const els = {
   connBadge: $("conn-badge"),
   statusDot: $("status-dot"),
   statusText: $("status-text"),
+  voiceToggle: $("voice-toggle"),
   viewChips: $("view-chips"),
   issues: $("issues"),
   seatedNow: $("seated-now"),
@@ -98,6 +101,8 @@ const state = {
   lastResult: null,
   mode: "single", // single | dual
   views: {}, // view -> 运行时单元（视频流/推理器/绘制状态）
+  voiceEnabled: false,
+  spokenIssues: {}, // code -> { severity, at }：语音播报状态
 };
 
 // ---------- 启动 / 停止 ----------
@@ -406,6 +411,7 @@ function renderResult(r) {
 
   setStatus(r.status);
   renderIssues(r.issues ?? []);
+  maybeSpeak(r.issues ?? []);
   if (r.view && r.metrics) {
     state.latestMetrics[r.view] = r.metrics;
     renderMetrics();
@@ -443,6 +449,74 @@ function renderIssues(issues) {
       ? `${prefix}${label}（${detail.trim()}）`
       : `${prefix}${label}`;
     els.issues.appendChild(li);
+  }
+}
+
+// ---------- 语音提示 ----------
+//
+// 触发策略（用户确认）：问题出现时播报一次；从轻度恶化到重度再报一次；
+// 持续不良期间每 2 分钟重复提醒；恢复后重置，再次出现会重新播报。
+
+function initVoiceToggle() {
+  if (!els.voiceToggle) return;
+  state.voiceEnabled = localStorage.getItem(VOICE_STORAGE_KEY) === "1";
+  els.voiceToggle.checked = state.voiceEnabled;
+  els.voiceToggle.addEventListener("change", () => {
+    state.voiceEnabled = els.voiceToggle.checked;
+    localStorage.setItem(VOICE_STORAGE_KEY, state.voiceEnabled ? "1" : "0");
+    if (state.voiceEnabled) speak("语音提示已开启");
+  });
+}
+
+function maybeSpeak(issues) {
+  if (!state.voiceEnabled || !("speechSynthesis" in window)) return;
+  const now = Date.now();
+  const due = [];
+
+  for (const iss of issues) {
+    const prev = state.spokenIssues[iss.code];
+    const escalated =
+      prev && prev.severity === "mild" && iss.severity === "severe";
+    // 首次出现、恶化升级、或持续不良超过重复间隔时需要播报
+    if (!prev || escalated || now - prev.at >= VOICE_REPEAT_MS) {
+      due.push(iss);
+      state.spokenIssues[iss.code] = { severity: iss.severity, at: now };
+    } else {
+      state.spokenIssues[iss.code].severity = iss.severity;
+    }
+  }
+
+  // 已恢复的问题清除记录，再次出现时重新播报
+  const active = new Set(issues.map((i) => i.code));
+  for (const code of Object.keys(state.spokenIssues)) {
+    if (!active.has(code)) delete state.spokenIssues[code];
+  }
+
+  if (due.length === 0) return;
+
+  const parts = due.map((iss) => {
+    const label = ISSUE_TEXT[iss.code] ?? iss.code;
+    return iss.severity === "severe" ? `${label}明显` : label;
+  });
+  const onlyLongSitting = due.every((i) => i.code === "long_sitting");
+  speak(onlyLongSitting ? parts.join("，") : `请注意坐姿：${parts.join("，")}`);
+}
+
+function speak(text) {
+  if (!("speechSynthesis" in window)) return;
+  try {
+    // 打断上一条尚未播完的内容，避免排队长龙
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = "zh-CN";
+    utter.rate = 1;
+    const zhVoice = window.speechSynthesis
+      .getVoices()
+      .find((v) => v.lang && v.lang.toLowerCase().startsWith("zh"));
+    if (zhVoice) utter.voice = zhVoice;
+    window.speechSynthesis.speak(utter);
+  } catch {
+    // 语音合成失败不影响检测
   }
 }
 
@@ -599,5 +673,6 @@ function drawOverlay(unit, landmarks) {
 els.startBtn.onclick = start;
 els.units[VIEW_FRONT].calibBtn.onclick = () => calibrate(VIEW_FRONT);
 els.units[VIEW_SIDE].calibBtn.onclick = () => calibrate(VIEW_SIDE);
+initVoiceToggle();
 loadConfig();
 loadCalibration();
