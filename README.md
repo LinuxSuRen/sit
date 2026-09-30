@@ -1,4 +1,4 @@
-# sit — 坐姿检测助手
+# sitcoach — 坐姿检测助手
 
 基于人体关键点几何角度的实时坐姿检测服务，后端为纯 Golang 实现。
 
@@ -17,7 +17,7 @@
 
 角度判定基于**个人标定基线**：首次使用时保持标准坐姿标定一次（页面按钮，采集 3 秒），
 之后各项角度指标都以“相对标定坐姿的偏差”参与阈值比较，摄像头摆放角度带来的
-固有偏差会被自动抵消。基线持久化在 `~/.sit-calibration.json`（`-calibration` 可改路径），
+固有偏差会被自动抵消。基线持久化在 `~/.sitcoach-calibration.json`（`-calibration` 可改路径），
 服务重启无需重新标定；页面按钮可随时重新标定。
 
 **未标定的视角不参与角度判定**（状态返回 `needs_calibration`），久坐计时照常工作。
@@ -137,8 +137,8 @@ go vet ./...
 本地构建会注入占位版本信息，正式版本号由 CI 构建时注入：
 
 ```bash
-go build -trimpath -ldflags "-s -w" -o sit .
-./sit -version   # 输出 version/commit/build_date
+go build -trimpath -ldflags "-s -w" -o sitcoach .
+./sitcoach -version   # 输出 version/commit/build_date
 ```
 
 ### GitHub Actions
@@ -151,7 +151,7 @@ go build -trimpath -ldflags "-s -w" -o sit .
   自动上传到对应 Release
 
 发布流程：合并代码 → 打 tag 并创建 Release（如 `v0.1.0`）→ CI 自动构建上传。
-发布包命名：`sit_<os>_<arch>.tar.gz` / `sit_<os>_<arch>.zip`。
+发布包命名：`sitcoach_<os>_<arch>.tar.gz` / `sitcoach_<os>_<arch>.zip`。
 
 ## License
 

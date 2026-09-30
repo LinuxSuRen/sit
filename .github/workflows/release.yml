@@ -47,9 +47,9 @@ jobs:
           for target in "${TARGETS[@]}"; do
             GOOS="${target%/*}"
             GOARCH="${target#*/}"
-            NAME="sit_${GOOS}_${GOARCH}"
-            EXE="sit"
-            if [ "${GOOS}" = "windows" ]; then EXE="sit.exe"; fi
+            NAME="sitcoach_${GOOS}_${GOARCH}"
+            EXE="sitcoach"
+            if [ "${GOOS}" = "windows" ]; then EXE="sitcoach.exe"; fi
             echo "==> building ${NAME}"
             CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
               go build -trimpath -ldflags "${LDFLAGS}" -o "dist/${NAME}/${EXE}" .

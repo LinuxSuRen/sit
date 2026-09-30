@@ -1,4 +1,4 @@
-module github.com/linuxsuren/sit
+module github.com/linuxsuren/sitcoach
 
 go 1.25
 
