@@ -72,6 +72,7 @@ const els = {
   },
   banner: $("banner"),
   startBtn: $("start-btn"),
+  modeSwitch: $("mode-switch"),
   connBadge: $("conn-badge"),
   statusDot: $("status-dot"),
   statusText: $("status-text"),
@@ -98,6 +99,7 @@ const state = {
   lastResult: null,
   mode: "single", // single | dual
   views: {}, // view -> 运行时单元（视频流/推理器/绘制状态）
+  deviceIds: {}, // view -> 当前使用的 deviceId
 };
 
 // ---------- 启动 / 停止 ----------
@@ -105,22 +107,24 @@ const state = {
 async function start() {
   els.startBtn.disabled = true;
   setBanner("正在加载检测模型…", false);
+  let degraded = false;
   try {
     const devices = await listVideoDevices();
+    // 枚举结果可能包含虚拟摄像头等不可用条目，第二路打不开时自动降级单摄
     state.mode = devices.length >= 2 ? "dual" : "single";
-    els.viewsRow.classList.toggle("dual", state.mode === "dual");
     if (state.mode === "dual") {
-      els.units[VIEW_SIDE].unit.hidden = false;
-      els.units[VIEW_FRONT].label.textContent = VIEW_TEXT[VIEW_FRONT];
       setupDeviceSelect(VIEW_FRONT, devices, devices[0]?.deviceId);
-      setupDeviceSelect(VIEW_SIDE, devices, devices[1]?.deviceId);
-      await Promise.all([
-        initView(VIEW_FRONT, devices[0]?.deviceId),
-        initView(VIEW_SIDE, devices[1]?.deviceId),
-      ]);
+      await initView(VIEW_FRONT, devices[0]?.deviceId);
+      const secondId = devices.find((d) => d.deviceId !== state.deviceIds[VIEW_FRONT])?.deviceId;
+      try {
+        setupDeviceSelect(VIEW_SIDE, devices, secondId);
+        await initView(VIEW_SIDE, secondId);
+      } catch (err) {
+        console.warn("second camera unusable, degrade to single mode", err);
+        state.mode = "single";
+        degraded = true;
+      }
     } else {
-      els.units[VIEW_SIDE].unit.hidden = true;
-      els.units[VIEW_FRONT].label.textContent = VIEW_TEXT[VIEW_DEFAULT];
       setupDeviceSelect(VIEW_FRONT, devices, devices[0]?.deviceId);
       await initView(VIEW_FRONT, devices[0]?.deviceId);
     }
@@ -130,20 +134,26 @@ async function start() {
     els.startBtn.disabled = false;
     return;
   }
+  applyModeUI();
   state.running = true;
   els.startBtn.textContent = "停止检测";
   els.startBtn.disabled = false;
   els.startBtn.onclick = stop;
+  els.modeSwitch.hidden = false;
   for (const view of Object.keys(state.views)) {
     state.views[view].calibBtnEl.disabled = false;
   }
   const uncalibrated = activeViews().filter((v) => !state.calibrated[v]);
-  setBanner(
-    uncalibrated.length
-      ? "请摆好标准坐姿，然后点击对应视角的「标定此视角」"
-      : "请坐到摄像头前",
-    false
-  );
+  if (degraded) {
+    setBanner("第二个摄像头无法打开，已切换为单摄像头模式", false, 4000);
+  } else {
+    setBanner(
+      uncalibrated.length
+        ? "请摆好标准坐姿，然后点击「标定正确坐姿」"
+        : "请坐到摄像头前",
+      false
+    );
+  }
   updateMetricLabels();
   connectWS();
   requestAnimationFrame(loop);
@@ -166,11 +176,73 @@ function stop() {
   els.units[VIEW_SIDE].unit.hidden = true;
   els.viewsRow.classList.remove("dual");
   els.units[VIEW_FRONT].label.textContent = VIEW_TEXT[VIEW_DEFAULT];
+  els.units[VIEW_FRONT].calibBtn.textContent = "标定正确坐姿";
+  els.modeSwitch.hidden = true;
   setBanner("检测已停止", false);
   els.startBtn.textContent = "开始检测";
   els.startBtn.onclick = start;
   setStatus("idle");
   state.latestMetrics = {};
+}
+
+// ---------- 单/双摄模式切换 ----------
+
+// applyModeUI 按当前 state.mode 同步界面：窗格可见性、标签、按钮文案
+function applyModeUI() {
+  const dual = state.mode === "dual";
+  if (dual && !state.views[VIEW_SIDE]) {
+    // 尚未初始化侧视流的场合不强行展示
+    els.units[VIEW_SIDE].unit.hidden = true;
+  } else {
+    els.units[VIEW_SIDE].unit.hidden = !dual;
+  }
+  els.viewsRow.classList.toggle("dual", dual);
+  els.units[VIEW_FRONT].label.textContent = dual ? VIEW_TEXT[VIEW_FRONT] : VIEW_TEXT[VIEW_DEFAULT];
+  els.units[VIEW_FRONT].calibBtn.textContent = dual ? "标定此视角" : "标定正确坐姿";
+  els.units[VIEW_SIDE].calibBtn.textContent = "标定此视角";
+  els.modeSwitch.textContent = dual ? "只用一个摄像头" : "添加侧视摄像头";
+}
+
+// switchMode 在运行中切换单/双摄；枚举到多个摄像头但实际只有一个可用时，
+// 用户可以在这里强制回到单摄
+async function switchMode() {
+  if (!state.running || state.calibrating) return;
+  if (state.mode === "dual") {
+    const side = state.views[VIEW_SIDE];
+    if (side?.stream) side.stream.getTracks().forEach((t) => t.stop());
+    if (side) side.videoEl.srcObject = null;
+    delete state.views[VIEW_SIDE];
+    state.mode = "single";
+    state.latestMetrics = {};
+    applyModeUI();
+    updateMetricLabels();
+    renderViewChips(state.lastResult);
+    setBanner("已切换为单摄像头模式，请重新标定正确坐姿", false, 4000);
+    return;
+  }
+
+  // 升级为双摄
+  const devices = await listVideoDevices().catch(() => []);
+  const second = devices.find((d) => d.deviceId !== state.deviceIds[VIEW_FRONT]);
+  if (!second) {
+    setBanner("未发现第二个摄像头，请先连接后再试", false, 3000);
+    return;
+  }
+  try {
+    setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
+    setupDeviceSelect(VIEW_SIDE, devices, second.deviceId);
+    await initView(VIEW_SIDE, second.deviceId);
+    state.views[VIEW_SIDE].calibBtnEl.disabled = false;
+  } catch {
+    setBanner("第二个摄像头无法打开，仍保持单摄像头模式", false, 4000);
+    return;
+  }
+  state.mode = "dual";
+  state.latestMetrics = {};
+  applyModeUI();
+  updateMetricLabels();
+  renderViewChips(state.lastResult);
+  setBanner("已切换为双摄模式，请分别标定正视与侧视", false, 4000);
 }
 
 async function listVideoDevices() {
@@ -230,6 +302,7 @@ async function initView(view, deviceId) {
     lastVideoTime: -1,
     lastSentAt: 0,
   };
+  if (deviceId) state.deviceIds[view] = deviceId;
 }
 
 async function initLandmarker(delegate) {
@@ -597,6 +670,7 @@ function drawOverlay(unit, landmarks) {
 }
 
 els.startBtn.onclick = start;
+els.modeSwitch.onclick = switchMode;
 els.units[VIEW_FRONT].calibBtn.onclick = () => calibrate(VIEW_FRONT);
 els.units[VIEW_SIDE].calibBtn.onclick = () => calibrate(VIEW_SIDE);
 loadConfig();

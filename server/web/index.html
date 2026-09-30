@@ -23,7 +23,7 @@
           </div>
           <div class="unit-controls">
             <select id="device-front" hidden></select>
-            <button id="calib-front" class="secondary" disabled>标定此视角</button>
+            <button id="calib-front" class="secondary" disabled>标定正确坐姿</button>
           </div>
         </div>
 
@@ -44,8 +44,9 @@
 
       <div class="controls">
         <button id="start-btn">开始检测</button>
+        <button id="mode-switch" class="link" hidden>添加侧视摄像头</button>
         <p class="hint" id="hint-text">
-          画面只在本机浏览器中分析，服务器只收到骨架坐标。首次使用请先保持标准坐姿并点击「标定此视角」，
+          画面只在本机浏览器中分析，服务器只收到骨架坐标。首次使用请先保持标准坐姿并点击「标定正确坐姿」，
           之后的角度判定都以它为基准。只有一个摄像头也可以用；有两个时建议一个正视、一个侧视，判定更准。
         </p>
       </div>

@@ -82,6 +82,12 @@ button {
   background: var(--accent); color: #fff;
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.link {
+  background: none; border: none; padding: 0;
+  color: var(--accent); font-size: 13px;
+  text-decoration: underline; cursor: pointer;
+}
+button.link:disabled { opacity: 0.5; }
 button.secondary {
   background: transparent;
   border: 1px solid var(--accent);
