@@ -118,6 +118,31 @@ go test ./...
 go vet ./...
 ```
 
+## 构建与发布
+
+本地构建会注入占位版本信息，正式版本号由 CI 构建时注入：
+
+```bash
+go build -trimpath -ldflags "-s -w" -o sit .
+./sit -version   # 输出 version/commit/build_date
+```
+
+### GitHub Actions
+
+- `build.yml`：push 到 master / 提交 PR 时自动跑 `go vet` + `go test`
+- `release.yml`：**创建 GitHub Release（发布后）** 自动触发，也可以在
+  Actions 页面手动触发并输入 tag；交叉编译 6 个平台
+  （linux/darwin/windows × amd64/arm64），Windows 打 zip、其余打 tar.gz
+  （内含二进制、LICENSE、README），附 `checksums.txt`（sha256），
+  自动上传到对应 Release
+
+发布流程：合并代码 → 打 tag 并创建 Release（如 `v0.1.0`）→ CI 自动构建上传。
+发布包命名：`sit_<os>_<arch>.tar.gz` / `sit_<os>_<arch>.zip`。
+
+## License
+
+[MIT](LICENSE)
+
 ## 方案来源与参考
 
 检测方法沿袭开源坐姿检测项目的通用做法（姿态估计关键点 + 几何角度阈值 + 去抖）：
