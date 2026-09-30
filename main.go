@@ -13,10 +13,24 @@ import (
 	"github.com/linuxsuren/sit/server"
 )
 
+// 构建时通过 -ldflags 注入（见 .github/workflows/release.yml）。
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP 监听地址")
 	calibPath := flag.String("calibration", "", "坐姿标定基线文件路径；留空时使用 ~/.sit-calibration.json")
+	showVersion := flag.Bool("version", false, "输出版本信息后退出")
 	flag.Parse()
+
+	if *showVersion {
+		slog.New(slog.NewTextHandler(os.Stdout, nil)).Info("sit",
+			"version", version, "commit", commit, "build_date", buildDate)
+		return
+	}
 
 	path := *calibPath
 	if path == "" {
@@ -41,7 +55,8 @@ func main() {
 	}
 
 	logger.Info("sit server listening", "addr", *addr,
-		"page", "http://localhost:8080/", "calibration_file", path)
+		"page", "http://localhost:8080/", "calibration_file", path,
+		"version", version, "commit", commit)
 	if err := http.ListenAndServe(*addr, srv.Handler()); err != nil {
 		logger.Error("server exited", "err", err)
 		os.Exit(1)
