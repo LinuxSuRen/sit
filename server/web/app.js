@@ -102,7 +102,8 @@ const state = {
   calibrated: {}, // view -> baseline
   latestMetrics: {}, // view -> metrics
   lastResult: null,
-  mode: "single", // single | dual
+  mode: "single", // single | dual（默认单摄，多角度需手动开启）
+  deviceCount: 0, // 枚举到的摄像头数量
   views: {}, // view -> 运行时单元（视频流/推理器/绘制状态）
   deviceIds: {}, // view -> 当前使用的 deviceId
   voiceEnabled: false,
@@ -113,30 +114,26 @@ const state = {
 
 async function start() {
   els.startBtn.disabled = true;
-  setBanner("正在检测可用摄像头…", false);
-  let degraded = false;
+  setBanner("正在启动摄像头…", false);
+  let deviceCount = 0;
   try {
     const devices = await listVideoDevices();
-    // 窗口数量与实际可用的设备数量挂钩：逐个短暂打开验证，
-    // 枚举得到但打不开的条目（虚拟/被占用/已拔出）不占窗口
-    const usable = await probeUsableDevices(devices);
-    const candidates = usable.length ? usable : devices;
-    state.mode = candidates.length >= 2 ? "dual" : "single";
-    if (state.mode === "dual") {
-      setupDeviceSelect(VIEW_FRONT, candidates, candidates[0]?.deviceId);
-      await initView(VIEW_FRONT, candidates[0]?.deviceId);
+    deviceCount = devices.length;
+    // 默认只用一个摄像头：打开第一个能成功打开的设备，
+    // 打不开的条目（虚拟/被占用/已拔出）自动跳过
+    let opened = false;
+    for (const d of devices) {
       try {
-        setupDeviceSelect(VIEW_SIDE, candidates, candidates[1]?.deviceId);
-        await initView(VIEW_SIDE, candidates[1]?.deviceId);
-      } catch (err) {
-        console.warn("second camera unusable, degrade to single mode", err);
-        state.mode = "single";
-        degraded = true;
+        await initView(VIEW_FRONT, d.deviceId);
+        opened = true;
+        break;
+      } catch {
+        // 该设备打不开，尝试下一个
       }
-    } else {
-      setupDeviceSelect(VIEW_FRONT, candidates, candidates[0]?.deviceId);
-      await initView(VIEW_FRONT, candidates[0]?.deviceId);
     }
+    if (!opened) throw new Error("no usable camera");
+    setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
+    state.mode = "single";
   } catch (err) {
     console.error(err);
     setBanner("无法访问摄像头或加载模型，请检查浏览器授权与网络后重试", false);
@@ -145,24 +142,22 @@ async function start() {
   }
   applyModeUI();
   state.running = true;
+  state.deviceCount = deviceCount;
   els.startBtn.textContent = "停止检测";
   els.startBtn.disabled = false;
   els.startBtn.onclick = stop;
-  els.modeSwitch.hidden = false;
+  // 枚举到多个设备时才提供开启多角度检测的入口
+  els.modeSwitch.hidden = state.deviceCount < 2;
   for (const view of Object.keys(state.views)) {
     state.views[view].calibBtnEl.disabled = false;
   }
   const uncalibrated = activeViews().filter((v) => !state.calibrated[v]);
-  if (degraded) {
-    setBanner("第二个摄像头无法打开，已切换为单摄像头模式", false, 4000);
-  } else {
-    setBanner(
-      uncalibrated.length
-        ? "请摆好标准坐姿，然后点击「标定正确坐姿」"
-        : "请坐到摄像头前",
-      false
-    );
-  }
+  setBanner(
+    uncalibrated.length
+      ? "请摆好标准坐姿，然后点击「标定正确坐姿」"
+      : "请坐到摄像头前",
+    false
+  );
   updateMetricLabels();
   connectWS();
   requestAnimationFrame(loop);
@@ -229,22 +224,26 @@ async function switchMode() {
     return;
   }
 
-  // 升级为双摄
+  // 升级为双摄：逐个尝试打开第二个设备，打不开的自动跳过
   const devices = await listVideoDevices().catch(() => []);
-  const second = devices.find((d) => d.deviceId !== state.deviceIds[VIEW_FRONT]);
-  if (!second) {
-    setBanner("未发现第二个摄像头，请先连接后再试", false, 3000);
-    return;
+  let added = false;
+  for (const d of devices) {
+    if (d.deviceId === state.deviceIds[VIEW_FRONT]) continue;
+    try {
+      await initView(VIEW_SIDE, d.deviceId);
+      added = true;
+      break;
+    } catch {
+      // 该设备打不开，尝试下一个
+    }
   }
-  try {
-    setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
-    setupDeviceSelect(VIEW_SIDE, devices, second.deviceId);
-    await initView(VIEW_SIDE, second.deviceId, { manualAdded: true });
-    state.views[VIEW_SIDE].calibBtnEl.disabled = false;
-  } catch {
+  if (!added) {
     setBanner("第二个摄像头无法打开，仍保持单摄像头模式", false, 4000);
     return;
   }
+  setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
+  setupDeviceSelect(VIEW_SIDE, devices, state.deviceIds[VIEW_SIDE]);
+  state.views[VIEW_SIDE].calibBtnEl.disabled = false;
   state.mode = "dual";
   state.latestMetrics = {};
   applyModeUI();
@@ -279,37 +278,23 @@ function removeView(view, reason) {
 
 // ---------- 视角看门狗 ----------
 //
-// 自动判定第二路摄像头是否真实可用：
-//   1. 完全没有画面信号（readyState 始终不到 2）超过 15 秒 → 关窗
-//   2. 有画面但从未检测到人，而主视角近期一直看得到人，持续超过 30 秒
-//      → 大概率是虚拟摄像头的测试图案 → 关窗
-// 用户手动「添加侧视摄像头」打开的视角（manualAdded）不会被自动踢掉。
+// 多角度检测为用户主动开启，因此只踢“确定坏了”的流：
+//   - 完全没有画面信号（readyState 始终不到 2）超过 15 秒 → 关窗
+//   - 摄像头被拔出（track ended）→ 关窗（见 initView）
+// 用户开启的窗口不会因“画面里暂时没有人”被关闭。
 
 const VIEW_NO_SIGNAL_MS = 15000;
-const VIEW_NO_PERSON_MS = 30000;
 
 function startViewWatchdog() {
   clearInterval(state.watchdog);
   state.watchdog = setInterval(() => {
     if (!state.running || state.calibrating) return;
     const side = state.views[VIEW_SIDE];
-    if (!side || side.manualAdded) return;
-    const front = state.views[VIEW_FRONT];
-    if (!front) return;
+    if (!side) return;
 
     const now = performance.now();
     if (!side.firstFrameAt && now - side.startedAt > VIEW_NO_SIGNAL_MS) {
       removeView(VIEW_SIDE, "第二个摄像头一直没有画面信号");
-      return;
-    }
-    if (
-      side.firstFrameAt &&
-      !side.everSeenPerson &&
-      now - side.startedAt > VIEW_NO_PERSON_MS &&
-      front.everSeenPerson &&
-      now - front.lastPersonAt < 10000
-    ) {
-      removeView(VIEW_SIDE, "第二个摄像头始终未检测到人，疑似虚拟摄像头");
     }
   }, 5000);
 }
@@ -320,37 +305,6 @@ async function listVideoDevices() {
   probe.getTracks().forEach((t) => t.stop());
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((d) => d.kind === "videoinput");
-}
-
-// probeUsableDevices 逐个短暂打开验证：枚举到但打不开的设备（部分虚拟
-// 摄像头、被占用或已拔出的条目）不会出现在返回列表里
-async function probeUsableDevices(devices) {
-  const usable = [];
-  for (const d of devices) {
-    if (await probeDevice(d.deviceId)) usable.push(d);
-  }
-  return usable;
-}
-
-async function probeDevice(deviceId) {
-  const p = navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId } },
-  });
-  // 无论超时与否，只要打开了就立即关掉，不留占用
-  p.then((s) => s.getTracks().forEach((t) => t.stop())).catch(() => {});
-  try {
-    await withTimeout(p, 4000);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function withTimeout(promise, ms) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
-  ]);
 }
 
 function setupDeviceSelect(view, devices, preferredId) {
@@ -378,7 +332,7 @@ function setupDeviceSelect(view, devices, preferredId) {
   };
 }
 
-async function initView(view, deviceId, opts = {}) {
+async function initView(view, deviceId) {
   const ui = els.units[view];
   const stream = await navigator.mediaDevices.getUserMedia({
     video: deviceId
@@ -407,8 +361,6 @@ async function initView(view, deviceId, opts = {}) {
     firstFrameAt: 0,
     everSeenPerson: false,
     lastPersonAt: 0,
-    // 手动添加的视角不会被自动踢掉
-    manualAdded: !!opts.manualAdded,
   };
   state.views[view] = unit;
   if (deviceId) state.deviceIds[view] = deviceId;
