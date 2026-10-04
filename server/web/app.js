@@ -59,6 +59,7 @@ const els = {
       unit: $("unit-front"),
       video: $("video-front"),
       canvas: $("overlay-front"),
+      calibOverlay: document.querySelector("#unit-front .calib-overlay"),
       label: $("label-front"),
       deviceSelect: $("device-front"),
       calibBtn: $("calib-front"),
@@ -67,6 +68,7 @@ const els = {
       unit: $("unit-side"),
       video: $("video-side"),
       canvas: $("overlay-side"),
+      calibOverlay: document.querySelector("#unit-side .calib-overlay"),
       label: $("label-side"),
       deviceSelect: $("device-side"),
       calibBtn: $("calib-side"),
@@ -100,7 +102,8 @@ const state = {
   calibrated: {}, // view -> baseline
   latestMetrics: {}, // view -> metrics
   lastResult: null,
-  mode: "single", // single | dual
+  mode: "single", // single | dual（默认单摄，多角度需手动开启）
+  deviceCount: 0, // 枚举到的摄像头数量
   views: {}, // view -> 运行时单元（视频流/推理器/绘制状态）
   deviceIds: {}, // view -> 当前使用的 deviceId
   voiceEnabled: false,
@@ -111,28 +114,26 @@ const state = {
 
 async function start() {
   els.startBtn.disabled = true;
-  setBanner("正在加载检测模型…", false);
-  let degraded = false;
+  setBanner("正在启动摄像头…", false);
+  let deviceCount = 0;
   try {
     const devices = await listVideoDevices();
-    // 枚举结果可能包含虚拟摄像头等不可用条目，第二路打不开时自动降级单摄
-    state.mode = devices.length >= 2 ? "dual" : "single";
-    if (state.mode === "dual") {
-      setupDeviceSelect(VIEW_FRONT, devices, devices[0]?.deviceId);
-      await initView(VIEW_FRONT, devices[0]?.deviceId);
-      const secondId = devices.find((d) => d.deviceId !== state.deviceIds[VIEW_FRONT])?.deviceId;
+    deviceCount = devices.length;
+    // 默认只用一个摄像头：打开第一个能成功打开的设备，
+    // 打不开的条目（虚拟/被占用/已拔出）自动跳过
+    let opened = false;
+    for (const d of devices) {
       try {
-        setupDeviceSelect(VIEW_SIDE, devices, secondId);
-        await initView(VIEW_SIDE, secondId);
-      } catch (err) {
-        console.warn("second camera unusable, degrade to single mode", err);
-        state.mode = "single";
-        degraded = true;
+        await initView(VIEW_FRONT, d.deviceId);
+        opened = true;
+        break;
+      } catch {
+        // 该设备打不开，尝试下一个
       }
-    } else {
-      setupDeviceSelect(VIEW_FRONT, devices, devices[0]?.deviceId);
-      await initView(VIEW_FRONT, devices[0]?.deviceId);
     }
+    if (!opened) throw new Error("no usable camera");
+    setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
+    state.mode = "single";
   } catch (err) {
     console.error(err);
     setBanner("无法访问摄像头或加载模型，请检查浏览器授权与网络后重试", false);
@@ -141,33 +142,33 @@ async function start() {
   }
   applyModeUI();
   state.running = true;
+  state.deviceCount = deviceCount;
   els.startBtn.textContent = "停止检测";
   els.startBtn.disabled = false;
   els.startBtn.onclick = stop;
-  els.modeSwitch.hidden = false;
+  // 枚举到多个设备时才提供开启多角度检测的入口
+  els.modeSwitch.hidden = state.deviceCount < 2;
   for (const view of Object.keys(state.views)) {
     state.views[view].calibBtnEl.disabled = false;
   }
   const uncalibrated = activeViews().filter((v) => !state.calibrated[v]);
-  if (degraded) {
-    setBanner("第二个摄像头无法打开，已切换为单摄像头模式", false, 4000);
-  } else {
-    setBanner(
-      uncalibrated.length
-        ? "请摆好标准坐姿，然后点击「标定正确坐姿」"
-        : "请坐到摄像头前",
-      false
-    );
-  }
+  setBanner(
+    uncalibrated.length
+      ? "请摆好标准坐姿，然后点击「标定正确坐姿」"
+      : "请坐到摄像头前",
+    false
+  );
   updateMetricLabels();
   connectWS();
   requestAnimationFrame(loop);
+  startViewWatchdog();
   loadConfig();
 }
 
 function stop() {
   state.running = false;
   clearTimeout(state.reconnectTimer);
+  clearInterval(state.watchdog);
   if (state.ws) state.ws.close();
   for (const unit of Object.values(state.views)) {
     if (unit.stream) unit.stream.getTracks().forEach((t) => t.stop());
@@ -213,10 +214,7 @@ function applyModeUI() {
 async function switchMode() {
   if (!state.running || state.calibrating) return;
   if (state.mode === "dual") {
-    const side = state.views[VIEW_SIDE];
-    if (side?.stream) side.stream.getTracks().forEach((t) => t.stop());
-    if (side) side.videoEl.srcObject = null;
-    delete state.views[VIEW_SIDE];
+    teardownView(VIEW_SIDE);
     state.mode = "single";
     state.latestMetrics = {};
     applyModeUI();
@@ -226,28 +224,79 @@ async function switchMode() {
     return;
   }
 
-  // 升级为双摄
+  // 升级为双摄：逐个尝试打开第二个设备，打不开的自动跳过
   const devices = await listVideoDevices().catch(() => []);
-  const second = devices.find((d) => d.deviceId !== state.deviceIds[VIEW_FRONT]);
-  if (!second) {
-    setBanner("未发现第二个摄像头，请先连接后再试", false, 3000);
-    return;
+  let added = false;
+  for (const d of devices) {
+    if (d.deviceId === state.deviceIds[VIEW_FRONT]) continue;
+    try {
+      await initView(VIEW_SIDE, d.deviceId);
+      added = true;
+      break;
+    } catch {
+      // 该设备打不开，尝试下一个
+    }
   }
-  try {
-    setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
-    setupDeviceSelect(VIEW_SIDE, devices, second.deviceId);
-    await initView(VIEW_SIDE, second.deviceId);
-    state.views[VIEW_SIDE].calibBtnEl.disabled = false;
-  } catch {
+  if (!added) {
     setBanner("第二个摄像头无法打开，仍保持单摄像头模式", false, 4000);
     return;
   }
+  setupDeviceSelect(VIEW_FRONT, devices, state.deviceIds[VIEW_FRONT]);
+  setupDeviceSelect(VIEW_SIDE, devices, state.deviceIds[VIEW_SIDE]);
+  state.views[VIEW_SIDE].calibBtnEl.disabled = false;
   state.mode = "dual";
   state.latestMetrics = {};
   applyModeUI();
   updateMetricLabels();
   renderViewChips(state.lastResult);
   setBanner("已切换为双摄模式，请分别标定正视与侧视", false, 4000);
+}
+
+// teardownView 停掉某个视角的流并从运行时移除（不动界面状态）
+function teardownView(view) {
+  const unit = state.views[view];
+  if (!unit) return;
+  if (unit.stream) unit.stream.getTracks().forEach((t) => t.stop());
+  unit.videoEl.srcObject = null;
+  const ctx = unit.canvasEl.getContext("2d");
+  ctx.clearRect(0, 0, unit.canvasEl.width, unit.canvasEl.height);
+  unit.calibOverlay.hidden = true;
+  delete state.views[view];
+}
+
+// removeView 关闭一个视角的窗口并回到单摄模式
+function removeView(view, reason) {
+  if (!state.views[view]) return;
+  teardownView(view);
+  state.mode = "single";
+  state.latestMetrics = {};
+  applyModeUI();
+  updateMetricLabels();
+  renderViewChips(state.lastResult);
+  setBanner(`${reason}，已关闭该摄像头窗口；如需使用请点「添加侧视摄像头」`, false, 6000);
+}
+
+// ---------- 视角看门狗 ----------
+//
+// 多角度检测为用户主动开启，因此只踢“确定坏了”的流：
+//   - 完全没有画面信号（readyState 始终不到 2）超过 15 秒 → 关窗
+//   - 摄像头被拔出（track ended）→ 关窗（见 initView）
+// 用户开启的窗口不会因“画面里暂时没有人”被关闭。
+
+const VIEW_NO_SIGNAL_MS = 15000;
+
+function startViewWatchdog() {
+  clearInterval(state.watchdog);
+  state.watchdog = setInterval(() => {
+    if (!state.running || state.calibrating) return;
+    const side = state.views[VIEW_SIDE];
+    if (!side) return;
+
+    const now = performance.now();
+    if (!side.firstFrameAt && now - side.startedAt > VIEW_NO_SIGNAL_MS) {
+      removeView(VIEW_SIDE, "第二个摄像头一直没有画面信号");
+    }
+  }, 5000);
 }
 
 async function listVideoDevices() {
@@ -296,18 +345,34 @@ async function initView(view, deviceId) {
   ui.video.srcObject = stream;
   await ui.video.play();
   const landmarker = await initLandmarker("GPU").catch(() => initLandmarker("CPU"));
-  state.views[view] = {
+  const unit = {
     view,
     videoEl: ui.video,
     canvasEl: ui.canvas,
     calibBtnEl: ui.calibBtn,
+    calibOverlay: ui.calibOverlay,
     stream,
     landmarker,
     lastLandmarks: null,
     lastVideoTime: -1,
     lastSentAt: 0,
+    // 供看门狗使用的健康状态
+    startedAt: performance.now(),
+    firstFrameAt: 0,
+    everSeenPerson: false,
+    lastPersonAt: 0,
   };
+  state.views[view] = unit;
   if (deviceId) state.deviceIds[view] = deviceId;
+
+  // 摄像头被拔出时自动关闭对应窗口
+  for (const track of stream.getVideoTracks()) {
+    track.addEventListener("ended", () => {
+      if (state.running && state.views[view]?.stream === stream) {
+        removeView(view, "摄像头已断开");
+      }
+    });
+  }
 }
 
 async function initLandmarker(delegate) {
@@ -335,14 +400,22 @@ function loop() {
   if (!state.running) return;
   for (const unit of Object.values(state.views)) {
     const video = unit.videoEl;
-    if (video.readyState >= 2 && video.currentTime !== unit.lastVideoTime) {
-      unit.lastVideoTime = video.currentTime;
-      try {
-        const result = unit.landmarker.detectForVideo(video, performance.now());
-        const landmarks = result.landmarks?.[0] ?? null;
-        if (landmarks) unit.lastLandmarks = landmarks;
-      } catch {
-        // 单帧推理失败不终止整个循环
+    if (video.readyState >= 2) {
+      if (!unit.firstFrameAt) unit.firstFrameAt = performance.now();
+      if (video.currentTime !== unit.lastVideoTime) {
+        unit.lastVideoTime = video.currentTime;
+        try {
+          const result = unit.landmarker.detectForVideo(video, performance.now());
+          const landmarks = result.landmarks?.[0] ?? null;
+          if (landmarks) {
+            unit.lastLandmarks = landmarks;
+            // 供看门狗判断“该摄像头是否真的看得到人”
+            unit.everSeenPerson = true;
+            unit.lastPersonAt = performance.now();
+          }
+        } catch {
+          // 单帧推理失败不终止整个循环
+        }
       }
     }
     if (unit.lastLandmarks) drawOverlay(unit, unit.lastLandmarks);
@@ -413,17 +486,19 @@ async function calibrate(view) {
   state.calibrating = view;
   unit.calibBtnEl.disabled = true;
   setBanner(
-    `请在${VIEW_TEXT[state.mode === "dual" ? view : VIEW_DEFAULT]}摄像头前保持标准坐姿…`,
+    `请在${VIEW_TEXT[state.mode === "dual" ? view : VIEW_DEFAULT]}摄像头前保持标准坐姿，倒计时显示在画面上`,
     false
   );
+
+  // 倒计时直接叠加在被标定的检测画面上
+  const overlay = unit.calibOverlay;
+  const numEl = overlay.querySelector(".calib-num");
+  overlay.hidden = false;
 
   const frames = [];
   const steps = CALIB_MS / CALIB_INTERVAL_MS;
   for (let i = 0; i < steps; i++) {
-    setBanner(
-      `请保持标准坐姿，剩余 ${Math.ceil((CALIB_MS - i * CALIB_INTERVAL_MS) / 1000)} 秒…`,
-      false
-    );
+    numEl.textContent = String(Math.ceil((CALIB_MS - i * CALIB_INTERVAL_MS) / 1000));
     if (unit.lastLandmarks) {
       frames.push({
         landmarks: mirror(unit.lastLandmarks),
@@ -432,6 +507,7 @@ async function calibrate(view) {
     }
     await new Promise((res) => setTimeout(res, CALIB_INTERVAL_MS));
   }
+  overlay.hidden = true;
 
   try {
     const resp = await fetch("/api/calibrate", {

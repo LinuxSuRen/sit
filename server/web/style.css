@@ -10,6 +10,10 @@
   --accent: #4aa3ff;
 }
 
+/* hidden 属性全局守卫：任何 display 规则（如 .view-unit 的 flex）
+   都不得让元素在 hidden 时继续渲染 */
+[hidden] { display: none !important; }
+
 * { box-sizing: border-box; }
 
 body {
@@ -60,6 +64,22 @@ main {
   padding: 2px 10px; border-radius: 999px;
   background: rgba(0, 0, 0, 0.6); font-size: 12px;
 }
+
+/* 标定倒计时叠加层 */
+.calib-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+.calib-overlay[hidden] { display: none; }
+.calib-num {
+  font-size: 72px; font-weight: 700; line-height: 1;
+  color: #fff; text-shadow: 0 0 24px rgba(52, 201, 142, 0.8);
+  font-variant-numeric: tabular-nums;
+}
+.calib-tip { font-size: 14px; color: rgba(255, 255, 255, 0.85); }
 .unit-controls { display: flex; gap: 8px; align-items: center; }
 .unit-controls select {
   flex: 1; min-width: 0;
