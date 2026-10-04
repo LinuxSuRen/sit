@@ -81,6 +81,11 @@ const els = {
   statusDot: $("status-dot"),
   statusText: $("status-text"),
   voiceToggle: $("voice-toggle"),
+  settingsBtn: $("settings-btn"),
+  settingsView: $("settings-view"),
+  settingsBack: $("settings-back"),
+  mainView: $("main-view"),
+  voiceLang: $("voice-lang"),
   viewChips: $("view-chips"),
   issues: $("issues"),
   seatedNow: $("seated-now"),
@@ -106,6 +111,7 @@ const state = {
   views: {}, // view -> 运行时单元（视频流/推理器/绘制状态）
   deviceIds: {}, // view -> 当前使用的 deviceId
   voiceEnabled: false,
+  voiceLang: "zh", // 语音播报语言：zh | en | auto
   spokenIssues: {}, // code -> { severity, at }：语音播报状态
 };
 
@@ -654,6 +660,54 @@ function renderIssues(issues) {
 // 触发策略（用户确认）：问题出现时播报一次；从轻度恶化到重度再报一次；
 // 持续不良期间每 2 分钟重复提醒；恢复后重置，再次出现会重新播报。
 
+// 播报语言包：语音文案随用户选择的语言切换（设置页）
+const VOICE_LANG_KEY = "sitcoach-voice-lang";
+const VOICE_TEXTS = {
+  zh: {
+    lang: "zh-CN",
+    voiceMatch: "zh",
+    prefix: "请注意坐姿：",
+    severe: "明显",
+    joiner: "，",
+    enabled: "语音提示已开启",
+    labels: {
+      forward_head: "头部前倾",
+      torso_lean_forward: "身体前倾",
+      torso_lean_back: "身体后仰",
+      head_tilt_left: "头向左歪",
+      head_tilt_right: "头向右歪",
+      long_sitting: "久坐提醒：该起来活动一下了",
+    },
+  },
+  en: {
+    lang: "en-US",
+    voiceMatch: "en",
+    prefix: "Posture alert: ",
+    severe: " (severe)",
+    joiner: ", ",
+    enabled: "Voice alerts enabled",
+    labels: {
+      forward_head: "forward head",
+      torso_lean_forward: "leaning forward",
+      torso_lean_back: "leaning back",
+      head_tilt_left: "head tilted left",
+      head_tilt_right: "head tilted right",
+      long_sitting: "time to stand up and move around",
+    },
+  },
+};
+
+// resolveVoiceLang 把 auto 解析为实际语言（浏览器语言前缀）
+function resolveVoiceLang() {
+  const stored = state.voiceLang ?? "zh";
+  if (stored !== "auto") return VOICE_TEXTS[stored] ? stored : "zh";
+  return (navigator.language || "zh").toLowerCase().startsWith("en") ? "en" : "zh";
+}
+
+function voicePack() {
+  return VOICE_TEXTS[resolveVoiceLang()] ?? VOICE_TEXTS.zh;
+}
+
 function initVoiceToggle() {
   if (!els.voiceToggle) return;
   state.voiceEnabled = localStorage.getItem(VOICE_STORAGE_KEY) === "1";
@@ -661,8 +715,32 @@ function initVoiceToggle() {
   els.voiceToggle.addEventListener("change", () => {
     state.voiceEnabled = els.voiceToggle.checked;
     localStorage.setItem(VOICE_STORAGE_KEY, state.voiceEnabled ? "1" : "0");
-    if (state.voiceEnabled) speak("语音提示已开启");
+    if (state.voiceEnabled) speak(voicePack().enabled);
   });
+}
+
+// ---------- 设置页 ----------
+
+function initSettings() {
+  state.voiceLang = localStorage.getItem(VOICE_LANG_KEY) || "zh";
+  els.voiceLang.value = state.voiceLang;
+  els.settingsBtn.onclick = openSettings;
+  els.settingsBack.onclick = closeSettings;
+  els.voiceLang.onchange = () => {
+    state.voiceLang = els.voiceLang.value;
+    localStorage.setItem(VOICE_LANG_KEY, state.voiceLang);
+    if (state.voiceEnabled) speak(voicePack().enabled);
+  };
+}
+
+function openSettings() {
+  els.settingsView.hidden = false;
+  els.mainView.hidden = true;
+}
+
+function closeSettings() {
+  els.settingsView.hidden = true;
+  els.mainView.hidden = false;
 }
 
 function maybeSpeak(issues) {
@@ -691,12 +769,13 @@ function maybeSpeak(issues) {
 
   if (due.length === 0) return;
 
+  const pack = voicePack();
   const parts = due.map((iss) => {
-    const label = ISSUE_TEXT[iss.code] ?? iss.code;
-    return iss.severity === "severe" ? `${label}明显` : label;
+    const label = pack.labels[iss.code] ?? iss.code;
+    return iss.severity === "severe" ? `${label}${pack.severe}` : label;
   });
   const onlyLongSitting = due.every((i) => i.code === "long_sitting");
-  speak(onlyLongSitting ? parts.join("，") : `请注意坐姿：${parts.join("，")}`);
+  speak(onlyLongSitting ? parts.join(pack.joiner) : `${pack.prefix}${parts.join(pack.joiner)}`);
 }
 
 function speak(text) {
@@ -704,13 +783,14 @@ function speak(text) {
   try {
     // 打断上一条尚未播完的内容，避免排队长龙
     window.speechSynthesis.cancel();
+    const pack = voicePack();
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "zh-CN";
+    utter.lang = pack.lang;
     utter.rate = 1;
-    const zhVoice = window.speechSynthesis
+    const matched = window.speechSynthesis
       .getVoices()
-      .find((v) => v.lang && v.lang.toLowerCase().startsWith("zh"));
-    if (zhVoice) utter.voice = zhVoice;
+      .find((v) => v.lang && v.lang.toLowerCase().startsWith(pack.voiceMatch));
+    if (matched) utter.voice = matched;
     window.speechSynthesis.speak(utter);
   } catch {
     // 语音合成失败不影响检测
@@ -872,5 +952,6 @@ els.modeSwitch.onclick = switchMode;
 els.units[VIEW_FRONT].calibBtn.onclick = () => calibrate(VIEW_FRONT);
 els.units[VIEW_SIDE].calibBtn.onclick = () => calibrate(VIEW_SIDE);
 initVoiceToggle();
+initSettings();
 loadConfig();
 loadCalibration();
