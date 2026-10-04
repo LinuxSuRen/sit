@@ -58,7 +58,7 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	mux := http.NewServeMux()
-	mux.Handle("GET /", http.FileServer(http.FS(content)))
+	mux.Handle("GET /", noCache(http.FileServer(http.FS(content))))
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handlePutConfig)
 	mux.HandleFunc("POST /api/calibrate", s.handleCalibrate)
@@ -66,6 +66,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/calibration", s.handleDeleteCalibration)
 	mux.HandleFunc("GET /ws/pose", s.handlePoseWS)
 	return logRequests(s.logger, mux)
+}
+
+// noCache makes browsers revalidate static assets on every load. The pages
+// are embedded at build time and change across restarts; without this,
+// heuristically cached old JS can outlive the binary that served it.
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func logRequests(logger *slog.Logger, next http.Handler) http.Handler {
