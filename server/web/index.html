@@ -9,10 +9,31 @@
 <body>
   <header>
     <h1>坐姿检测助手</h1>
-    <span id="conn-badge" class="badge offline">未连接</span>
+    <div class="header-right">
+      <span id="conn-badge" class="badge offline">未连接</span>
+      <button id="settings-btn" class="icon-btn" title="设置" aria-label="设置">⚙</button>
+    </div>
   </header>
 
-  <main>
+  <section id="settings-view" class="settings-view" hidden>
+    <div class="settings-card">
+      <div class="settings-head">
+        <button id="settings-back" class="secondary">← 返回</button>
+        <h2>设置</h2>
+      </div>
+      <div class="settings-item">
+        <label for="voice-lang">语音提示语言</label>
+        <select id="voice-lang">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+          <option value="auto">跟随浏览器语言</option>
+        </select>
+      </div>
+      <p class="hint">语音播报的内容会随语言切换；「跟随浏览器语言」按系统语言自动选择中文或英文。</p>
+    </div>
+  </section>
+
+  <main id="main-view">
     <section class="camera">
       <div class="views-row" id="views-row">
         <div class="view-unit" id="unit-front">

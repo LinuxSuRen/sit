@@ -133,6 +133,33 @@ button.secondary:not(:disabled):hover { background: rgba(74, 163, 255, 0.12); }
 .status-card { display: flex; align-items: center; gap: 10px; font-size: 20px; }
 .status-card #status-text { flex: 1; }
 
+/* 头部右侧与设置入口 */
+.header-right { display: flex; align-items: center; gap: 10px; }
+.icon-btn {
+  background: none; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--muted); font-size: 17px; line-height: 1;
+  width: 32px; height: 32px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* 设置页 */
+.settings-view { max-width: 560px; margin: 20px auto; padding: 0 24px; }
+.settings-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 18px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.settings-head { display: flex; align-items: center; gap: 12px; }
+.settings-head h2 { margin: 0; font-size: 17px; flex: 1; }
+.settings-item { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.settings-item label { flex: 1; }
+.settings-item select {
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 10px; font-size: 13px;
+}
+
 /* 语音提示开关 */
 .voice-switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .voice-switch input { display: none; }
